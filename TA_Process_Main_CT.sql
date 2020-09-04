@@ -1,4 +1,4 @@
-﻿USE Paradise_AADH_CT
+﻿USE Paradise_AADH
 GO
 if object_id('[dbo].[TA_Process_Main]') is null
 	EXEC ('CREATE PROCEDURE [dbo].[TA_Process_Main] as select 1')
@@ -27,7 +27,6 @@ end
 
 if [dbo].[CheckIsRunningProc]('TA_Process_Main') = 1
 return
-
 DECLARE @IsAuditAccount bit
 SET @IsAuditAccount = dbo.fn_CheckAuditAccount(@LoginID)
 DECLARE @StopUpdate bit = 0, @p_ShiftID int, @p_AttStart datetime, @p_AttEnd datetime,@MaternityStatusID tinyint
@@ -298,7 +297,7 @@ Period  int,
   update #Maternity SET EndDate = StatusEndDate from #Maternity mt
   inner join tblEmployeeStatusHistory sh
   on mt.EmployeeID = sh.EmployeeID and sh.EmployeeStatusID in (10,11) and sh.ChangedDate = BornDate and StatusEndDate is not null
-update #Maternity SET EndDate = dateadd(year, 1, BornDate) where EndDate IS NULL
+  update #Maternity SET EndDate = dateadd(year, 1, BornDate) where EndDate IS NULL
   update #Maternity SET MinusMin = @MATERNITY_MUNITE
 
   update #Maternity SET EndDate = DATEADD(day,-1,t.ChangedDate)
@@ -512,6 +511,12 @@ group by EmployeeID, LeaveDate
 
 
 
+
+
+
+
+
+
  UPDATE #tmpMultiPeriod SET SiWorkEnd = case when  SiAttEnd <= SiBreakEnd then  SiBreakStart  else SiWorkEnd end
  ,SiWorkStart =  case when SiAttStart > SiBreakStart then  SiBreakEnd  else SiWorkStart end
 
@@ -565,8 +570,7 @@ UPDATE b SET SiLeave1 = b.SiLeave1 - a.MissOut from #tmpMultiPeriod b inner join
 
 
 
-
- drop table #tmpMultiPeriod
+drop table #tmpMultiPeriod
 -- Xoa nhung ban nghi ko can thiet phai tinh toan
 
 
@@ -755,7 +759,7 @@ END
  update o set ShiftID = 67
   from #tmpHasTA_OT o
  where o.employeeID in ('AAF4617','AAF0076','AAF0121')
- and ShiftId in (select ShiftID from tblShiftSetting s where s.ShiftCode = 'HCM' )
+ and ShiftId in (select ShiftID from tblShiftSetting s where s.ShiftCode in('HCM','HCN' ))
 
  -- nghỉ nửa đầu hoặc nửa sau thì chỉ tính OT sau hoăc OT trước
  UPDATE #tmpHasTA_OT SET MiWorkStart = DATEPART(hh,OTBeforeEnd) * 60 + DATEPART(mi,OTBeforeEnd)
@@ -766,12 +770,12 @@ END
  UPDATE #tmpHasTA_OT SET MiWorkEnd = DATEPART(hh,OTAfterStart) * 60 + DATEPART(mi,OTAfterStart)
   FROM #tmpHasTA_OT ta
   INNER JOIN #ShiftInfo ts ON ta.ShiftID = ts.ShiftID AND ts.OTAfterStart IS NOT NULL AND DATEPART(hh,ta.WorkStart) < DATEPART(hh,ta.WorkEnd) AND ta.MiWorkEnd < 1440
- where  (ta.Holidaystatus in (0))
+ where  (ta.Holidaystatus = 0 )
 
  UPDATE #tmpHasTA_OT SET MiWorkEnd = 1440 + DATEPART(hh,OTAfterStart)* 60 + DATEPART(mi,OTAfterStart)
   FROM #tmpHasTA_OT ta
   INNER JOIN #ShiftInfo ts ON ta.ShiftID = ts.ShiftID AND ts.OTAfterStart IS NOT NULL AND ta.MiWorkEnd >1440+ DATEPART(hh,OTAfterStart)* 60 + DATEPART(mi,OTAfterStart) AND DATEPART(hh,ta.WorkStart) >DATEPART(hh,ta.WorkEnd) --  AND ta.MiWorkEnd >= DATEPART(hh,OTAfterStart)* 60 + DATEPART(mi,OTAfterStart)
- where  (ta.Holidaystatus in (0) )
+ where  (ta.Holidaystatus = 0 )
 
 
  UPDATE  #tmpHasTA_OT SET MiAttStart = DATEPART(hh,OTBeforeStart)* 60 + DATEPART(mi,OTBeforeStart)
@@ -821,13 +825,14 @@ END
   and ((miWorkStart - miAttStart < @OT_MIN_BEFORE
   and MiAttEnd - MiWorkEnd < @OT_MIN_AFTER) or MiAttEnd - MiAttStart < @OT_MIN_AFTER)
      and not exists(select 1 from #Maternity m where ot.EmployeeID = m.EmployeeID and ot.AttDate between BornDate and EndDate) --loai bo nhung nguoi huong che do truoc sau sinh
-
+	
  SELECT EmployeeID into #tblEmployeeWithoutOT
  From #tblEmployeeList
   where (PositionID in (select PositionID from tblPosition where OTCalculated = 0)
   or DepartmentID in (select DepartmentID from tblDepartment where OTCalculated = 0)
   )
   and EmployeeID in (select EmployeeID from #tmpEmployee)
+
 if(OBJECT_ID('TA_ProcessMain_Begin_InsertOTTemp' )is null)
 begin
 exec('CREATE PROCEDURE TA_ProcessMain_Begin_InsertOTTemp
@@ -856,9 +861,7 @@ EXEC TA_ProcessMain_Begin_InsertOTTemp @FromDate=@FromDate, @ToDate=@ToDate, @Lo
      AND isnull(MiBreakStart,MiWorkStart) - MiAttStart >= 0 -- Neu  nghi nua buoi sang, chieu di lam som thi` phai lam truoc BreakStart moi duoc tinh OT truoc
      --AND DayType = 0           -- Neu lam ca ngay hoac nua buoi sang thi` ko bi anh huong gi boi cau lenh nay vi khi do BreakStart luon > gio vao lam viec
      AND EmployeeID not in (select EmployeeID from #tblEmployeeWithoutOT)
-
-
-
+ --select @OT_MIN_BEFORE,MiWorkStart - MiAttStart,* from #tmpHasTA_OT
  --------------------------- Insert cac ban ghi de tinh OT after(OTCategoryID = 2 )---------------------------
   INSERT INTO #tmpOTTemp(EmployeeID,Period, AttDate, ShiftID, DayType, OTCategoryID, AttStart, AttEnd, MiOTStart, MiOTEnd, MiOTStartR, MiOTEndR,MiWorkEnd,MiWorkStart)
    SELECT EmployeeID,Period, AttDate, ShiftID, DayType, 2, AttStart, AttEnd, case when MiAttstart > MiWorkEnd then MiAttStart else MiWorkEnd end, MiAttEnd, case when MiAttstart > MiWorkEnd then MiAttStart else MiWorkEnd end, MiAttEnd,MiWorkEnd,MiWorkStart
@@ -874,13 +877,12 @@ EXEC TA_ProcessMain_Begin_InsertOTTemp @FromDate=@FromDate, @ToDate=@ToDate, @Lo
    WHERE MiAttEnd - MiAttStart >= @OT_MIN_AFTER
      AND DayType != 0
      AND EmployeeID not in (select EmployeeID from #tblEmployeeWithoutOT)
-
-	--chu nhat/ le, tang ca sau thi f lay theo gio bat dau tang ca
+	
+		--chu nhat/ le, tang ca sau thi f lay theo gio bat dau tang ca
 	update ot set MiOTStart = ss.MIOTAfterStart from #tmpOTTemp ot
 	inner join #ShiftInfo ss on ot.ShiftID = ss.ShiftID and ot.MiOTStart < ss.MIOTAfterStart
 	where ot.DayType in (1,2) and ot.OTCategoryID = 2 and ot.MiOTStart = ot.MiWorkEnd
-	and  exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and ss.ShiftCode in ('CT SG-HN','CTMT+PQ'))
-	
+	and  exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and ss.ShiftCode in ('VP NDH'))
 
   UPDATE #ShiftInfo SET MiDeductBearkTime = datepart(hh,BreakEnd)*60 + DATEPART(Mi,BreakEnd) - (datepart(hh,BreakStart)*60 + DATEPART(Mi,BreakStart))
  -- Xu ly thong tin cho cac co nang sau ho san
@@ -958,7 +960,6 @@ EXEC TA_ProcessMain_Begin_InsertOTTemp @FromDate=@FromDate, @ToDate=@ToDate, @Lo
 
  end
 
-
 if(OBJECT_ID('TA_ProcessMain_Finish_InsertOTTemp' )is null)
 begin
 exec('CREATE PROCEDURE TA_ProcessMain_Finish_InsertOTTemp
@@ -999,7 +1000,7 @@ FROM #tmpOTTemp t INNER JOIN #ShiftInfo s ON t.ShiftID = s.ShiftID
       (
        EmployeeID  nvarchar(20),
        AttDate  datetime,
-       Period  tinyint,
+ Period  tinyint,
        ShiftID  int,
        DayType  int,
        OTCategoryID int,
@@ -1020,9 +1021,8 @@ FROM #tmpOTTemp t INNER JOIN #ShiftInfo s ON t.ShiftID = s.ShiftID
        MiOTStartTmp int,
        MiOTEndTmp int,
 
-       Point1  int,
-
-    Point2  int,
+ Point1  int,
+   Point2  int,
        Point3  int,
        Point4  int,
        Point5  int,
@@ -1045,7 +1045,7 @@ FROM #tmpOTTemp t INNER JOIN #ShiftInfo s ON t.ShiftID = s.ShiftID
        ,V12Real float
        ,Approved bit default(0)
       )
-	
+
 
    if @HolidayOTBaseOnShiftInfo = 1
    begin
@@ -1086,8 +1086,6 @@ FROM #tmpOTTemp t INNER JOIN #ShiftInfo s ON t.ShiftID = s.ShiftID
 
     FROM #tmpOTTemp t INNER JOIN #tblOvertimeRange r ON r.DayType = t.DayType
  where t.ShiftID in (select ShiftID from tblShiftSetting ss where ss.ShiftCode in ('C1','C2','C3'))
-
-
  -- xe nang tach OT truoc ngay chu nhat
  update o set Point1 = 440
  from #tmpOT o
@@ -1107,8 +1105,10 @@ FROM #tmpOTTemp t INNER JOIN #ShiftInfo s ON t.ShiftID = s.ShiftID
   -- 3 bác tài xế tăng ca tính 150% hoặc 200%
     delete o from #tmpOT o where o.employeeID in ('AAF4617','AAF0076','AAF0121') and OTKind not in (11) and o.OTCategoryID = 1
     update o set Point1 = 0 from #tmpOT o where o.employeeID in ('AAF4617','AAF0076','AAF0121') and OTKind in (11) and o.OTCategoryID = 1
-	
+
   drop table #tblOvertimeRange
+
+
 if(OBJECT_ID('TA_ProcessMain_Finish_SetPointOT' )is null)
 begin
 exec('CREATE PROCEDURE TA_ProcessMain_Finish_SetPointOT
@@ -1173,17 +1173,19 @@ EXEC TA_ProcessMain_Finish_SetPointOT @FromDate=@FromDate, @ToDate=@ToDate, @Log
  from #tmpOT o inner join #ShiftInfo s on o.ShiftID = s.ShiftID and o.DayType > 0
   where o.MiOTEnd >  s.MIOTAfterStart and s.MIOTAfterStart > s.MIWorkEnd
 
---chi lai point cua cac ca cong trinh
+  --chi lai point cua cac ca cong trinh
 update #tmpOT set Point2 = 1290 from  #tmpOT ot
-where exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and ss.ShiftCode in ('CT SG-HN','CTMT+PQ')) and ot.OTKind = 11
+where exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and ss.ShiftCode in ('VP NDH')) and ot.OTKind = 11
 
 update #tmpOT set Point1 = 1290, Point2 = 1320 from #tmpOT ot
-where exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and ss.ShiftCode in ('CT SG-HN','CTMT+PQ')) and ot.OTKind = 33
+where exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and ss.ShiftCode in ('VP NDH')) and ot.OTKind = 33
 
   update #tmpOT set Point2 = 1320 from #tmpOT ot
-where exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and ss.ShiftCode in ('CT SG-HN','CTMT+PQ')) and ot.OTKind = 23 and DayType = 1 and OTCategoryID = 2
+where exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and ss.ShiftCode in ('VP NDH')) and ot.OTKind = 23 and DayType = 1 and OTCategoryID = 2
 
--------------------------------Tinh OT-------------------------------------------------------
+
+
+ -------------------------------Tinh OT-------------------------------------------------------
  -------1:OT trong doan tu Point5 den Point6--------------------------
   UPDATE #tmpOT
   SET MiOTStartTmp = MiOTStart
@@ -1204,11 +1206,11 @@ where exists(select 1 from tblShiftSetting ss where ot.ShiftID = ss.ShiftID and 
   UPDATE #tmpOT
   SET V56 = MiOTEndTmp - MiOTStartTmp
   if(exists(select 1 from tblOTDeductedTime))
-UPDATE #tmpOT -- Kiem tra OT co thuoc thoi gian bi tru ko
+  UPDATE #tmpOT -- Kiem tra OT co thuoc thoi gian bi tru ko
   SET V56 = V56 - (SELECT isnull(SUM(DeductedValue),0)
        FROM tblOTDeductedTime
        WHERE tblOTDeductedTime.ShiftID = #tmpOT.ShiftID
- AND MiOTStartTmp <= MiDeductedStart
+        AND MiOTStartTmp <= MiDeductedStart
         AND MiOTEndTmp >= MiDeductedEnd)
 
   update #tmpOT SET V56 = V56 - DeductBreakTime where V56 >= DeductBreakTime and MiBreakStart > MiOTStartTmp and MiBreakEnd < MiOTEndTmp
@@ -1310,7 +1312,7 @@ UPDATE #tmpOT -- Kiem tra OT co thuoc thoi gian bi tru ko
   SET V12 = V12 - (SELECT ISNULL(SUM(DeductedValue),0)
        FROM tblOTDeductedTime
        WHERE tblOTDeductedTime.ShiftID = #tmpOT.ShiftID
-  AND MiOTStartTmp <= MiDeductedStart
+        AND MiOTStartTmp <= MiDeductedStart
         AND MiOTEndTmp >= MiDeductedEnd)
 
   update #tmpOT SET V12 = V12 - DeductBreakTime where V12 >= DeductBreakTime and MiBreakStart > MiOTStartTmp and MiBreakEnd < MiOTEndTmp
@@ -1319,9 +1321,12 @@ UPDATE #tmpOT -- Kiem tra OT co thuoc thoi gian bi tru ko
 
   update #tmpOT SET V12 = V12 - DeductBreakTimeAfter where V12 >= DeductBreakTimeAfter and MIOTAfterStart < MiOTEndTmp and MIOTAfterStart > Point2  and (daytype = 0 or @HolidayOTBaseOnShiftInfo =0)
   update #tmpOT SET V12 = V12 - DeductBreakTimeAfter where V12 >= DeductBreakTimeAfter and MIOTAfterStart > MiOTStartTmp and MIOTAfterStart < MiOTEndTmp and daytype > 0 and @HolidayOTBaseOnShiftInfo = 1
+
   -- AAF lam 3.75h thi dc tinh 4h 4 tieng
   update #tmpOT set V12 = 240 where Point2 = 1200 and V12 between 220 and 240
   update #tmpOT set V12 = 480 where Point2 = 1200 and V12 between 445 and 480
+
+
   UPDATE #tmpOT
   --SET V12 = (CAST(V12   +@OT_ROUND_UNIT AS INT)/@OT_ROUND_UNIT)*(CAST(@OT_ROUND_UNIT AS FLOAT)/60.0) -- lam tron len
   SET V12 = (CAST(V12 AS INT)/@OT_ROUND_UNIT)*(CAST(@OT_ROUND_UNIT AS FLOAT)/60) -- lam tron xuong
@@ -1341,15 +1346,26 @@ UPDATE #tmpOT -- Kiem tra OT co thuoc thoi gian bi tru ko
    OTTo12 = dateadd(mi,cast(MiOTEndTmp as int)%60,OTTo12)
   WHERE V12 > 0
 
+   --ca HCN ap dung cho le va chu nhat
+  update #tmpOT set V12 = 4 from #tmpOT ot
+  left join tblShiftSetting ss on ot.ShiftID = ss.ShiftID
+  where ss.ShiftCode = 'HCN' and ot.OTCategoryID = 3 and cast(ot.OTFrom12 as time) = cast(ss.BreakEnd as time)
+  and cast(ot.OTTo12 as time) = cast(ss.WorkEnd as time) and ot.V12 >= 3.5
+
+  update #tmpOT set V12 = 8 from #tmpOT ot
+  left join tblShiftSetting ss on ot.ShiftID = ss.ShiftID
+  where ss.ShiftCode in('HCN','HCM') and ot.OTCategoryID = 3 and cast(ot.OTFrom12 as time) = cast(ss.WorkStart as time)
+  and cast(ot.OTTo12 as time) = cast(ss.WorkEnd as time) and ot.V12 >= 7.5
+
+
   --update #tmpOT SET V12 = V12 - DeductBreakTime/60.0 where V12 >= DeductBreakTime/60.0
   --update #tmpOT SET V34 = V34 - DeductBreakTime/60.0 where V34 >= DeductBreakTime/60.0
   --update #tmpOT SET V56 = V56 - DeductBreakTime/60.0 where V56 >= DeductBreakTime/60.0
-     ------------------------------OT tong cong--------------------------------
+  ------------------------------OT tong cong--------------------------------
   UPDATE #tmpOT
   SET OTValue = V12 + V34 + V56
 
   DELETE FROM #tmpOT WHERE OTValue <= 0 -- Xoa cac ban ghi ko phai OT
-
    -----------------------------Ket thuc tinh OT, gio trong bang #tmpOT chi bao gom nhung ngay, nhung nguoi co OT.
    --aaF xử ly tăng ca đêm chủ Nhật nhưng ngày khòng đi làm
   update t set OTKind = 37
@@ -1386,15 +1402,15 @@ UPDATE #tmpOT -- Kiem tra OT co thuoc thoi gian bi tru ko
  where t.DayType in(2) --and t.ShiftID in (select ShiftID from tblShiftSetting ss where ss.ShiftCode in ('C1','C2','C3'))
  and t.EmployeeID in ( select EmployeeID from #tblEmployeeList te where te.employeeID in ('AAF0147','AAF0148','AAF2470','AAF3446','AAF5103','AAF6211') or te.SectionID in (select SectionID from tblSection where SectionCode = 'LS'))
 
- --chi mai bảo bỏ đi
- --update t set
- --OTValue = case when OTValue between 7.4 and 8.2 then 8 else OTValue end
- --, V12 = case when V12 between 6.4 and 8.2 then 8 else V12 end
- --, V34 = case when V34 between 6.4 and 8.2 then 8 else V34 end
- --, V56 = case when V56 between 6.4 and 8.2 then 8 else V56 end
- --FROM #tmpOT t
- --where t.DayType > 0
-
+ --chi mai bảo bỏ đi :20200729
+ update t set
+ OTValue = case when OTValue between 7.4 and 8.2 then 8 else OTValue end
+ , V12 = case when V12 between 6.4 and 8.2 then 8 else V12 end
+ , V34 = case when V34 between 6.4 and 8.2 then 8 else V34 end
+ , V56 = case when V56 between 6.4 and 8.2 then 8 else V56 end
+ FROM #tmpOT t
+ where t.DayType > 0
+ and not exists(select 1 from tblShiftSetting ss where t.ShiftID = ss.ShiftID and ss.ShiftCode in ('HCM','HCN'))
 
   update #tmpOT SET V12=0 where V12 < 0.2
   update #tmpOT SET V34=0 where V34 < 0.2
@@ -1410,6 +1426,7 @@ UPDATE #tmpOT -- Kiem tra OT co thuoc thoi gian bi tru ko
  --OTKIND 33 khong duoc duyet.Khi nào tính mới Check vào mặc dinh là nghi giải lao kg tính e
  alter table #tmpOT add  remark nvarchar(250)
   UPDATE #tmpOT SET Approved = 0,remark = N'giờ giải lao' where OTKind = 33
+
 if(OBJECT_ID('TA_ProcessMain_Begin_InsertOTList' )is null)
 begin
 exec('CREATE PROCEDURE TA_ProcessMain_Begin_InsertOTList
@@ -1434,6 +1451,10 @@ EXEC TA_ProcessMain_Begin_InsertOTList @FromDate=@FromDate, @ToDate=@ToDate, @Lo
  delete ot from tblOTList ot inner join #tblPendingTaProcessMain p on ot.EmployeeID = p.EmployeeID and ot.OTDate = p.[Date] where
  exists (select 1 from #tblEmployeeList te where ot.EmployeeID = te.employeeID)
  and ot.StatusID <> 3
+
+
+
+
 delete ot
 FROM tblOTList ot
 inner join (
@@ -1519,6 +1540,7 @@ update o set Approved = 0 from #tmpOT o
   update o set Approved = 0 from #tmpOT o
  where o.OTCategoryID  in(1) and o.DayType = 0
  and exists (select 1 from #tmpEmployee te where o.EmployeeID = te.EmployeeID and te.GroupID in (464))
+
   --select * from #tmpOT order by AttDate return
   INSERT INTO tblOTList(EmployeeID, OTCategoryID,OTDate,Period,OTKind,ShiftID,OTFrom,OTTo,OTHour,Approved,ApprovedHours,StatusID,MealDeductHours,Notes)
    SELECT EmployeeID, OTCategoryID,AttDate,Period,OTKind,ShiftID,OTFrom12,OTTo12,ISNULL(v12Real,V12),Approved,V12,1,MealDeductHours,remark
@@ -1529,6 +1551,9 @@ update o set Approved = 0 from #tmpOT o
    union all
    SELECT EmployeeID, OTCategoryID,AttDate,Period,OTKind,ShiftID,OTFrom56,OTTo56,V56,Approved,V56,1,MealDeductHours,remark
    FROM #tmpOT WHERE V56 > 0
+
+
+
    --AAF Truc mo nuoc AAF0007,AAF0023 truc mo nuoc, ngay nao truc thi dc 80phut tang cang 100% (vao som hon khoang 40 phut va ve tren hon 10 phut)
   delete tblOTList from tblOTList ot inner join #tblPendingTaProcessMain p on ot.EmployeeID = p.EmployeeID and ot.OTDate = p.[Date]
   where Notes = N'Trực mở nước' and isnull(StatusID,0) <>3
@@ -1566,6 +1591,7 @@ SET @StopUpdate = 0
 EXEC TA_ProcessMain_ROUND_OT @FromDate=@FromDate, @ToDate=@ToDate, @LoginID=@LoginID, @IsAuditAccount=@IsAuditAccount, @StopUpdate=@StopUpdate output
   if @StopUpdate = 0
   begin
+
    -- làm tròn OT theo quy tắc
    UPDATE tblOTList SET ApprovedHours = (ROUND((ApprovedHours+0.5)/0.5,0)-0.5)*0.5-0.25
    FROM tblOTList ot inner join #tblPendingTaProcessMain p on ot.EmployeeID = p.EmployeeID and ot.OTDate = p.[Date]
@@ -1641,13 +1667,10 @@ and not exists(select 1 from #tmpOTMi_forNightCount ns where al.EmployeeID = ns.
 
 drop table #tmpOTMi_forNightCount
 
-
  DROP TABLE #tmpOT
  DROP TABLE #tmpHasTA_OT
  END
 end
-
-
 
  --end OT
 
@@ -1695,7 +1718,7 @@ begin
   CREATE TABLE #tmpNS
   (
    EmployeeID  nvarchar(20),
-   AttDate  datetime,
+AttDate  datetime,
    Period  int,
    ShiftID  int,
    DayType  int,
@@ -1910,7 +1933,6 @@ end
 INSERT INTO tblNightShiftList(EmployeeID, [Date], Period,NSKind,ShiftID,AttStart,AttEnd, Hours, Approval, HourApprove, StatusID)
   SELECT EmployeeID, AttDate,0, NSKind,ShiftID,AttStart,AttEnd, NSValue, 1, NSValue, 1
   FROM #tmpNS as tmp
-
   where not exists(select 1 from tblNightShiftList as ns where ns.employeeid = tmp.employeeid and ns.date = tmp.AttDate)
  -- làm tròn OT theo quy tắc
 
@@ -1969,7 +1991,7 @@ INSERT INTO tblOTList(EmployeeID, OTCategoryID,OTDate,Period,OTKind,ShiftID,OTFr
 exec ('Enable trigger ALL on tblWSchedule')
 exec ('Enable trigger ALL on tblHasTA')
 exec ('Enable trigger ALL on tblLvhistory')
-print 'eof'
+
 END
 
 /*
