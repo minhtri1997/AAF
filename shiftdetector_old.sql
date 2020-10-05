@@ -1,4 +1,4 @@
-﻿USE Paradise_WTC_20201001
+﻿USE Paradise_WTC
 GO
 if object_id('[dbo].[sp_ShiftDetector]') is null
 	EXEC ('CREATE PROCEDURE [dbo].[sp_ShiftDetector] as select 1')
@@ -13,7 +13,7 @@ ALTER PROCEDURE [dbo].[sp_ShiftDetector]
 --WITH encryption
 AS
 BEGIN
-
+--SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
 
 /*
 
@@ -171,19 +171,23 @@ select @AUTO_FILL_TIMEINOUT_FWC = isnull((select top 1 cast(Value as int) from t
 
 set @FromDate = CAST(@FromDate as date)
 
-select EmployeeID,[Date]
+select ta.EmployeeID,ta.[Date]
 , CAST(0 as int) as EmployeeStatusID
 , CAST(0 as int) as NotTrackTA
 into #tblPendingImportAttend
-from tblPendingImportAttend ta where [Date] between @FromDate and @ToDate AND LoginID = @LoginID
-and exists (select 1 from #tblEmployeeList e where e.employeeID = ta.EmployeeID and ta.Date >= e.HireDate)
-and not exists(select 1 from tblAtt_lock al where ta.EmployeeId = al.EmployeeId and ta.[date] = al.[date])
+
+from tblPendingImportAttend ta
+left join #tblEmployeeList e on e.employeeID = ta.EmployeeID and ta.Date >= e.HireDate
+left join tblAtt_lock al on ta.EmployeeId = al.EmployeeId and ta.[date] = al.[date]
+where ta.[Date] between @FromDate and @ToDate AND LoginID = @LoginID and e.EmployeeID is not null and al.EmployeeID is null
+--and exists (select 1 from #tblEmployeeList e where e.employeeID = ta.EmployeeID and ta.Date >= e.HireDate)
+--and not exists(select 1 from tblAtt_lock al where ta.EmployeeId = al.EmployeeId and ta.[date] = al.[date])
 
 
 if ROWCOUNT_BIG() <=0
 return
 
-CREATE CLUSTERED INDEX ix_PendingImportAttend ON #tblPendingImportAttend(EmployeeID,Date)
+--CREATE CLUSTERED INDEX ix_PendingImportAttend ON #tblPendingImportAttend(EmployeeID,Date)
 
 
 
@@ -204,17 +208,18 @@ end
 set @StopUpdate = 0
 exec dbo.sp_ShiftDetector_PrepareDataForProcessing @StopUpdate output ,@LoginID,@FromDate,@ToDate
 
-
+/*
 exec ('Disable trigger all on tblWSchedule')
 exec ('Disable trigger all on tblHasTA')
 exec ('Disable trigger all on tblLvhistory')
-
+*/
 insert into #tblPendingImportAttend(EmployeeID,[Date],EmployeeStatusID)
 select EmployeeID,dateadd(day,-1,[Date]),0 from #tblPendingImportAttend ta1
 where not exists(select 1 from #tblPendingImportAttend ta2 where ta1.EmployeeID = ta2.EmployeeID and ta1.[Date] = dateadd(day,1,ta2.[Date]))
 
 -- chua vao lam, loai ra khoi pending
-DELETE #tblPendingImportAttend FROM #tblPendingImportAttend p WHERE EXISTS (SELECT 1 FROM #tblEmployeeList e WHERE e.EmployeeID = p.EmployeeID AND e.HireDate > p.Date)
+DELETE #tblPendingImportAttend FROM #tblPendingImportAttend p
+WHERE EXISTS (SELECT 1 FROM #tblEmployeeList e WHERE e.EmployeeID = p.EmployeeID AND e.HireDate > p.Date)
 
 
 
@@ -516,7 +521,8 @@ CREATE TABLE #tblDivDepSecPos(STT int, EmployeeID varchar(20),DivisionID int,Dep
 -- c?n ki?m soát k? vi?c c?p nh?t thông tin vào b?ng tblDivDepSecPos, ko không s? nh?n d?ng sai.
 -- N?u công ty có phát sinh b? ph?n ngh? vi?c và nhét nhân viên vào b? ph?n dó thì ph?i lo?i ra kh?i l?ch s?
 insert into #tblDivDepSecPos(EmployeeID, DivisionID,DepartmentID,SectionID,GroupID,EmployeeTypeID,ChangedDate)
-select e.EmployeeID, e.DivisionID,isnull(h.DepartmentID,e.DepartmentID),isnull(h.SectionID,e.SectionID),isnull(h.GroupID, e.GroupID),e.EmployeeTypeID,isnull(h.ChangedDate,@FromDate) from #tblEmployeeList e left join dbo.fn_DivDepSecPos_ByDate(@ToDate) h on e.EmployeeID = h.EmployeeID
+select e.EmployeeID, e.DivisionID,isnull(h.DepartmentID,e.DepartmentID),isnull(h.SectionID,e.SectionID),isnull(h.GroupID, e.GroupID),e.EmployeeTypeID,isnull(h.ChangedDate,@FromDate)
+from #tblEmployeeList e left join dbo.fn_DivDepSecPos_ByDate(@ToDate) h on e.EmployeeID = h.EmployeeID
 
 insert into #tblDivDepSecPos(EmployeeID, DivisionID,DepartmentID,SectionID,GroupID,ChangedDate)
 select his.EmployeeID, his.DivisionID,his.DepartmentID,his.SectionID,his.GroupID,isnull(his.ChangedDate,@FromDate) from dbo.fn_DivDepSecPos_ByDate(@FromDate) his
@@ -586,7 +592,6 @@ cross join tblShiftGroup_Shift sgs
 where
 not exists (select 1 from #tblShiftGroupCode sg where e.EmployeeID = sg.EmployeeID)
 --EmployeeID not in(select EmployeeID from #tblShiftGroupCode)
-
 
 
 if(OBJECT_ID('sp_ShiftDetector_FinishConfigtblShiftGroupCode' )is null)
@@ -1381,6 +1386,8 @@ from #tblShiftDetectorMatched m inner join (
 
 
 update #tblShiftDetectorMatched set AttStart = tmp.AttTime
+
+
 from #tblShiftDetectorMatched m inner join (
  select m.EmployeeId, m.ScheduleDate, max(t.AttTime) AttTime
  from #tblShiftDetectorMatched m
@@ -1659,6 +1666,8 @@ UPDATE ta1 set WorkingTimeMi = cast(WorkingTimeMi as float) / ta1.StdWorkingTime
 from #tblShiftDetectorMatched ta1
 inner join #tblShiftSetting ta2 on ta1.ShiftCode = ta2.ShiftCode
  and ta1.StdWorkingTimeMi <> ta2.STDWorkingTime_SS
+
+
  and ta1.Workingtimemi >0
 left join (select EmployeeID,LeaveDate, sum(LvAmount) LvAmount
 from #tblLvHistory where LeaveCategory = 1 group by EmployeeID,LeaveDate) lv on lv.EmployeeID = ta1.EmployeeId and ta1.ScheduleDate = lv.LeaveDate
@@ -2509,6 +2518,7 @@ t.AttTime > ta1.AttEnd and t.AttTime <d.AttStart)
 end
 
 -- phat hien co ca bi sai thi nang cac ca con lai len de cho len tau truoc
+
 update d set RatioMatch = RatioMatch + 300
  from #tblShiftDetector_NeedUpdate d where exists (select 1 from (
 select EmployeeId, ScheduleDate, ShiftCode
@@ -3074,6 +3084,8 @@ end
 end
 -- ket thuc nhan dang ca
 
+
+
 set datefirst 7
 update d set ShiftID = s.ShiftID
 --,s.WorkstartMi,s.WorkendMi,s.AttStartMi,s.AttEndMi,s.BreakEndMi,s.BreakStartMi
@@ -3277,7 +3289,7 @@ begin
  -- AttStart
  update #tblHasTA_insert set AttStart = tmp.AttTime from #tblHasTA_insert ta inner join (
   select ta.EmployeeID,ta.AttDate, min(att.AttTime) AttTime
-  from #tblHasTA_insert ta
+from #tblHasTA_insert ta
   inner join #tblShiftDetectorMatched m on ta.EmployeeID = m.EmployeeId and ta.AttDate = m.ScheduleDate
   inner join #tblTmpAttend att on ta.EmployeeID = att.EmployeeID and att.AttTime > m.AttEndYesterday and att.AttTime< m.AttStartTomorrow
    and (ta.Period >0 or (att.AttTime< m.AttEnd or m.AttEnd is null))
@@ -3642,7 +3654,7 @@ begin
  update #tblHasTA_insert set AttEnd = tmp.AttTime from #tblHasTA_insert m inner join (
   SELECT m.EmployeeId, m.AttDate,m.Period, max(t.AttTime) AttTime
   FROM #tblHasTA_insert m inner join #tblTmpAttend_org t on m.EmployeeId = t.EmployeeID
-  where m.AttEnd is null and m.TAStatus = 0
+where m.AttEnd is null and m.TAStatus = 0
    and t.AttTime > m.WorkStart
    AND T.AttTime > m.AttEndYesterday and T.AttTime < m.AttStartTomorrow
    AND T.AttTime BETWEEN m.TIMEINBEFORE and m.TIMEOUTAFTER
@@ -3707,7 +3719,7 @@ and t.AttTime < m.WorkEnd
    AND T.AttTime BETWEEN m.TIMEINBEFORE and m.TIMEOUTAFTER
    AND m.AttEndYesterday is null and T.AttTime < m.AttStartTomorrow
    and t.AttTime between m.MinTimeIn and m.maxtimein
-  group by m.EmployeeId, m.AttDate,m.Period
+ group by m.EmployeeId, m.AttDate,m.Period
  ) tmp on m.EmployeeId = tmp.EmployeeId and m.AttDate = tmp.AttDate and m.Period = tmp.Period
 
  -- gio ra
@@ -3909,7 +3921,7 @@ from #tblHasTA_insert ta1
 inner join tbllvhistory lv on ta1.EmployeeID = lv.EmployeeID and ta1.Attdate = lv.LeaveDate
 
 --wtc:nghi FWC thi mac dinh them full ngay cong
-
+/*
 UPDATE ta SET AttStart = isnull(ta.AttStart,ta.Attdate + CAST(ss.WorkStart AS TIME))
 , ta.AttEnd = isnull(ta.AttEnd,CASE WHEN ss.WorkStart > ss.WorkEnd THEN DATEADD(dd,1,ta.Attdate) + CAST(ss.WorkEnd AS TIME) ELSE ta.Attdate + CAST(ss.WorkEnd AS TIME) END)
  FROM #tblHasTA_insert ta
@@ -3917,7 +3929,7 @@ INNER JOIN tblWSchedule ws ON ta.EmployeeID = ws.EmployeeID AND ta.Attdate = ws.
 LEFT JOIN tblShiftSetting ss ON ss.ShiftID = ws.ShiftID
 WHERE EXISTS(SELECT 1 FROM tblLvHistory lv WHERE ta.EmployeeID = lv.EmployeeID AND ta.Attdate = lv.LeaveDate AND lv.LeaveCode ='FWC')
 AND (ta.AttStart IS NULL OR ta.AttEnd IS NULL)
-
+*/
 if(OBJECT_ID('sp_ShiftDetector_UpdateHasTA_ChangeAttTime' )is null)
 begin
 exec('CREATE PROCEDURE sp_ShiftDetector_UpdateHasTA_ChangeAttTime
@@ -4152,7 +4164,8 @@ if not exists(select 1 from tblParameter where Code ='DONOT_USE_WORKINGTIME_RATE
  -- x? lý tru?ng h?p ngày phía tru?c ho?c phía sau dã duy?t gi? vào ra, thì ngày hi?n t?i không du?c sát v?i gi? vao ra cua nhung ngay
  --select ta.AttStart, ta1.AttEnd, ta.Attdate ,DATEDIFF(mi,ta1.AttEnd,ta.AttStart)
  update ta set AttStart = null,WorkingTime = null,WorkingTimeMi = null
- from #tblHasta_insert ta inner join #tblHasta_insert ta1 on ta.EmployeeID = ta1.EmployeeID and ta.Attdate = ta1.Attdate + 1
+ from #tblHasta_insert ta
+ inner join #tblHasta_insert ta1 on ta.EmployeeID = ta1.EmployeeID and ta.Attdate = ta1.Attdate + 1
  where ta.TAStatus = 0 and ta1.TAStatus in(2,3)
  and DATEDIFF(mi,ta1.AttEnd,ta.AttStart) < 61 -- gi? vào ph?i l?n 60 phút so v?i gi? ra hôm tru?c
  --select ta.AttEnd, ta1.AttStart, ta.Attdate ,DATEDIFF(mi,ta1.AttStart,ta.AttEnd)
@@ -4205,6 +4218,7 @@ FROM #tblShiftSetting ts
 
  END
 
+
  -- bo nhung du lieu ko hop le
   delete i1
  from tblHasTA i1 /*WITH(IGNORE_TRIGGERS)*/
@@ -4212,47 +4226,44 @@ FROM #tblShiftSetting ts
  and isnull(i1.TAStatus,0) <> 3
  and exists(select 1 from #tblHasTA_insert te where i1.EmployeeID = te.EmployeeID and i1.AttDate = te.AttDate)
  and not exists(select 1 from #tblHasTA_insert te where i1.EmployeeID = te.EmployeeID and i1.AttDate = te.AttDate and i1.Period = te.Period)
- AND i1.AttDate BETWEEN @FromDate AND @ToDate
  and not exists(select 1 from #tblWSchedule ws where i1.EmployeeID = ws.EmployeeID and i1.AttDate = ws.ScheduleDate and ws.DateStatus = 3)
 
  DELETE i1
  from tblHasTA i1 /*WITH(IGNORE_TRIGGERS)*/ inner join tblHasTA i2 on i1.employeeID = i2.EmployeeID and i1.AttDate = i2.AttDate - 1
- where isnull(i1.AttEnd,i1.AttStart) >= ISNULL(i2.AttStart,I2.AttEnd)
- and isnull(i1.TAStatus,0) <> 3
+ where isnull(i1.TAStatus,0) <> 3 and isnull(i1.AttEnd,i1.AttStart) >= ISNULL(i2.AttStart,I2.AttEnd)
  and exists(select 1 from #tblPendingImportAttend te where i1.EmployeeID = te.EmployeeID and i1.AttDate = te.Date)
- AND i1.AttDate BETWEEN @FromDate AND @ToDate
  and not exists(select 1 from #tblWSchedule ws where i1.EmployeeID = ws.EmployeeID and i1.AttDate = ws.ScheduleDate and ws.DateStatus = 3)
 
 DELETE I2
 from tblHasTA i1 inner join tblHasTA i2 /*WITH(IGNORE_TRIGGERS)*/ on i1.employeeID = i2.EmployeeID and i1.AttDate = i2.AttDate
- where i1.Period = i2.Period -1 and isnull(i1.AttEnd,i1.AttStart) >= ISNULL(i2.AttStart,I2.AttEnd)
- and isnull(i1.TAStatus,0) <> 3
+ where isnull(i1.TAStatus,0) <> 3 and i1.Period = i2.Period -1 and isnull(i1.AttEnd,i1.AttStart) >= ISNULL(i2.AttStart,I2.AttEnd)
  and exists(select 1 from #tblPendingImportAttend te where i1.EmployeeID = te.EmployeeID and i1.AttDate = te.Date)
- AND i2.AttDate BETWEEN @FromDate AND @ToDate
- and not exists(select 1 from #tblWSchedule ws where i2.EmployeeID = ws.EmployeeID and i2.AttDate = ws.ScheduleDate and ws.DateStatus = 3)
+ and not exists(select 1 from #tblWSchedule ws where i1.EmployeeID = ws.EmployeeID and i1.AttDate = ws.ScheduleDate and ws.DateStatus = 3)
 
- insert into tblHasTA(EmployeeID, AttDate, Period, AttStart,AttMiddle, AttEnd, Approve,WorkingTime)
+ insert into tblHasTA /*WITH(IGNORE_TRIGGERS)*/ (EmployeeID, AttDate, Period, AttStart,AttMiddle, AttEnd, Approve,WorkingTime)
  select distinct a.EmployeeID, a.AttDate, a.Period,a.AttStart,a.AttMiddle,a.AttEnd,0, a.WorkingTime
  from #tblHasTA_insert a
  where not exists(select 1 from tblHasTA b where a.EmployeeID = b.EmployeeID and a.AttDate = b.AttDate and a.Period = b.Period)
 
 
- UPDATE tblHasTA SET AttStart = b.AttStart, AttEnd = b.AttEnd,AttMiddle = b.AttMiddle
+ UPDATE tblHasTA /*WITH(IGNORE_TRIGGERS)*/ SET AttStart = b.AttStart, AttEnd = b.AttEnd,AttMiddle = b.AttMiddle
  from tblHasTA a
  inner join #tblHasTA_insert b on a.EmployeeID = b.EmployeeID and a.AttDate = b.AttDate and a.Period = b.Period
  where isnull(a.TAStatus,0) <> 3
  --and (a.AttStart is null or a.AttEnd is null or a.AttStart <> b.AttStart or a.AttEnd <> b.AttEnd)
  and not exists(select 1 from #tblWSchedule ws where a.EmployeeID = ws.EmployeeID and a.AttDate = ws.ScheduleDate and ws.DateStatus = 3)
 
- UPDATE tblHasTA SET AttStart = b.AttStart
+ UPDATE tblHasTA /*WITH(IGNORE_TRIGGERS)*/ SET AttStart = b.AttStart
  from tblHasTA a
  inner join #tblHasTA b on a.EmployeeID = b.EmployeeID and a.AttDate = b.AttDate and a.Period = b.Period
  where b.TAStatus = 1 and b.AttStart is not null
 
- UPDATE tblHasTA SET AttEnd = b.AttEnd
+
+ UPDATE tblHasTA /*WITH(IGNORE_TRIGGERS)*/ SET AttEnd = b.AttEnd
  from tblHasTA a
  inner join #tblHasTA b on a.EmployeeID = b.EmployeeID and a.AttDate = b.AttDate and a.Period = b.Period
  where b.TAStatus = 2 and b.AttEnd is not null
+
 
  UPDATE tblHasTA SET WorkingTime = --case when round(b.WorkingTime,3) > 0 then round(b.WorkingTime,3) else NULL end
  CASE WHEN ROUND(((b.WorkingTime+0.5)/0.5)-0.5,0)*0.5-0.5 > 0 THEN ROUND(((b.WorkingTime+0.5)/0.5)-0.5,0)*0.5-0.5  ELSE NULL END --wtc:làm tròn xuống 0.5
@@ -4307,9 +4318,9 @@ and [Date] between @fromdate and @todate
 --or exists(select 1 from #tblHasTA_insert att where d.employeeID = att.EmployeeID and d.Date = att.attdate)
 --update tblParameter set Value = '0' where Code = 'StopRuning_NoneStopProc'
 
-exec ('Enable trigger all on tblWSchedule')
-exec ('Enable trigger all on tblHasTA')
-exec ('Enable trigger all on tblLvhistory')
+--exec ('Enable trigger all on tblWSchedule')
+--exec ('Enable trigger all on tblHasTA')
+--exec ('Enable trigger all on tblLvhistory')
 
 --EXEC sp_InsertPendingProcessAttendanceData 3,'20200601','20200630','-1',1,0
 print 'eof'
